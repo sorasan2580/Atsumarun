@@ -195,7 +195,7 @@ export default function Home() {
         ) : null}
         <input
           type="text"
-          placeholder="例：たっしー"
+          placeholder="例：あつまるん"
           maxLength={12}
           value={nameInput}
           onChange={(e) => setNameInput(e.target.value)}
