@@ -3,11 +3,16 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 
 type Member = { name: string; dates: string[] };
+type GroupMode = 'calendar' | 'candidate';
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 
 function pad(n: number) { return n < 10 ? '0' + n : '' + n; }
 function ymd(y: number, m: number, d: number) { return `${y}-${pad(m + 1)}-${pad(d)}`; }
+function labelOf(dateStr: string) {
+  const d = new Date(dateStr);
+  return `${d.getMonth() + 1}/${d.getDate()}(${DOW[d.getDay()]})`;
+}
 
 function colorForRatio(ratio: number) {
   if (ratio <= 0) return { bg: '#dceee2', fg: '#3f7a5c' };
@@ -30,12 +35,19 @@ export default function Home() {
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
 
+  const [groupLoaded, setGroupLoaded] = useState(false);
+  const [groupExists, setGroupExists] = useState(false);
+  const [mode, setMode] = useState<GroupMode>('calendar');
+  const [candidateDates, setCandidateDates] = useState<string[]>([]);
+
+  const [setupMode, setSetupMode] = useState<GroupMode | null>(null);
+  const [setupCandidates, setSetupCandidates] = useState<Set<string>>(new Set());
+
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(''), 1600);
   }, []);
 
-  // groupId + shareUrl setup
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     let g = params.get('group') || '';
@@ -71,6 +83,24 @@ export default function Home() {
     if (!data.ok) throw new Error(data.error || 'failed');
   }, []);
 
+  const apiGetGroup = useCallback(async (group: string) => {
+    const res = await fetch(`/api/group?group=${encodeURIComponent(group)}`);
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'failed');
+    return data;
+  }, []);
+
+  const apiCreateGroup = useCallback(async (group: string, mode: GroupMode, dates: string[]) => {
+    const res = await fetch('/api/group', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ group, mode, candidateDates: dates }),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'failed');
+    return data;
+  }, []);
+
   const refresh = useCallback(async () => {
     if (!groupId) return;
     try {
@@ -81,9 +111,28 @@ export default function Home() {
     }
   }, [groupId, apiList, showToast]);
 
-  // load my entry + refresh whenever groupId/name change
   useEffect(() => {
     if (!groupId) return;
+    (async () => {
+      try {
+        const g = await apiGetGroup(groupId);
+        if (g.exists) {
+          setGroupExists(true);
+          setMode(g.mode);
+          setCandidateDates(g.candidateDates || []);
+        } else {
+          setGroupExists(false);
+        }
+      } catch {
+        showToast('読み込みに失敗しました');
+      } finally {
+        setGroupLoaded(true);
+      }
+    })();
+  }, [groupId, apiGetGroup, showToast]);
+
+  useEffect(() => {
+    if (!groupId || !groupExists) return;
     (async () => {
       if (name) {
         try {
@@ -98,14 +147,13 @@ export default function Home() {
         refresh();
       }
     })();
-  }, [groupId, name]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [groupId, groupExists, name]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // poll every 10s
   useEffect(() => {
-    if (!groupId) return;
+    if (!groupId || !groupExists) return;
     const id = setInterval(refresh, 10000);
     return () => clearInterval(id);
-  }, [groupId, refresh]);
+  }, [groupId, groupExists, refresh]);
 
   function handleSetName() {
     const v = nameInput.trim();
@@ -143,16 +191,10 @@ export default function Home() {
   }
 
   function prevMonth() {
-    setViewMonth((m) => {
-      if (m === 0) { setViewYear((y) => y - 1); return 11; }
-      return m - 1;
-    });
+    setViewMonth((m) => { if (m === 0) { setViewYear((y) => y - 1); return 11; } return m - 1; });
   }
   function nextMonth() {
-    setViewMonth((m) => {
-      if (m === 11) { setViewYear((y) => y + 1); return 0; }
-      return m + 1;
-    });
+    setViewMonth((m) => { if (m === 11) { setViewYear((y) => y + 1); return 0; } return m + 1; });
   }
 
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
@@ -177,6 +219,181 @@ export default function Home() {
     return Object.entries(ngCounts).sort((a, b) => (a[0] < b[0] ? -1 : 1));
   }, [ngCounts]);
 
+  function toggleSetupCandidate(dateStr: string) {
+    const next = new Set(setupCandidates);
+    if (next.has(dateStr)) {
+      next.delete(dateStr);
+    } else {
+      if (next.size >= 5) { showToast('候補日は最大5つまでです'); return; }
+      next.add(dateStr);
+    }
+    setSetupCandidates(next);
+  }
+
+  async function confirmSetup() {
+    if (setupMode === 'candidate' && setupCandidates.size < 2) {
+      showToast('候補日を2つ以上選んでください');
+      return;
+    }
+    const finalMode = setupMode || 'calendar';
+    const dates = finalMode === 'candidate' ? Array.from(setupCandidates).sort() : [];
+    try {
+      await apiCreateGroup(groupId, finalMode, dates);
+      setMode(finalMode);
+      setCandidateDates(dates);
+      setGroupExists(true);
+      showToast('設定しました');
+    } catch {
+      showToast('保存に失敗しました');
+    }
+  }
+
+  if (!groupLoaded) {
+    return (
+      <div className="wrap">
+        <header>
+          <div className="eyebrow">Group Availability</div>
+          <h1>あつまるん</h1>
+        </header>
+        <div className="empty-state">読み込み中…</div>
+      </div>
+    );
+  }
+
+  if (!groupExists) {
+    return (
+      <div className="wrap">
+        <header>
+          <div className="eyebrow">Group Availability</div>
+          <h1>あつまるん</h1>
+          <p>このリンクを最初に開いた人(あなた)が、使い方を決めます。</p>
+        </header>
+
+        <div className="card">
+          <h2><span className="num">1</span>方式を選ぶ</h2>
+          <button
+            className="btn"
+            style={setupMode === 'calendar' ? {} : { background: '#fff', color: 'var(--ink)' }}
+            onClick={() => setSetupMode('calendar')}
+          >
+            自由カレンダー方式(行けない日を自由にタップ)
+          </button>
+          <button
+            className="btn"
+            style={setupMode === 'candidate' ? {} : { background: '#fff', color: 'var(--ink)' }}
+            onClick={() => setSetupMode('candidate')}
+          >
+            候補日方式(2〜5個の候補日だけで○✕)
+          </button>
+        </div>
+
+        {setupMode === 'candidate' ? (
+          <div className="card">
+            <h2><span className="num">2</span>候補日を選ぶ(2〜5個)</h2>
+            <div className="cal-head">
+              <button onClick={prevMonth}>‹</button>
+              <div className="mo">{viewYear}年 {viewMonth + 1}月</div>
+              <button onClick={nextMonth}>›</button>
+            </div>
+            <div className="grid" style={{ marginBottom: 5 }}>
+              {DOW.map((d, i) => (
+                <div key={d} className="dow" style={{ color: i === 0 ? '#c14b4b' : i === 6 ? '#3b6fb0' : 'var(--muted)' }}>{d}</div>
+              ))}
+            </div>
+            <div className="grid">
+              {Array.from({ length: firstDow }).map((_, i) => <div key={'e' + i} className="day empty" />)}
+              {dayCells.map(({ d, dateStr, dow }) => (
+                <div
+                  key={dateStr}
+                  className={['day', dow === 0 ? 'sun' : '', dow === 6 ? 'sat' : '', setupCandidates.has(dateStr) ? 'ng' : ''].filter(Boolean).join(' ')}
+                  onClick={() => toggleSetupCandidate(dateStr)}
+                >
+                  {d}
+                </div>
+              ))}
+            </div>
+            <div className="legend"><span>選んだ候補日: {setupCandidates.size}個</span></div>
+          </div>
+        ) : null}
+
+        {setupMode ? (
+          <button className="btn" onClick={confirmSetup}>これで決定する</button>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (mode === 'candidate') {
+    return (
+      <div className="wrap">
+        <header>
+          <div className="eyebrow">Group Availability</div>
+          <h1>あつまるん</h1>
+          <p>候補日の中から、行けない日に✕をつけてください。</p>
+        </header>
+
+        <div className="card">
+          <h2><span className="num">1</span>名前を入力</h2>
+          {name ? (
+            <div className="whoami">名前：<b>{name}</b><button onClick={changeName}>変更</button></div>
+          ) : null}
+          <input type="text" placeholder="例：たっしー" maxLength={12} value={nameInput} onChange={(e) => setNameInput(e.target.value)} />
+          <button className="btn" onClick={handleSetName}>この名前で進める</button>
+        </div>
+
+        <div className="card">
+          <h2><span className="num">2</span>候補日に○✕をつける</h2>
+          {candidateDates.map((dateStr) => (
+            <div key={dateStr} className="summary-row">
+              <div className="date">{labelOf(dateStr)}</div>
+              <div style={{ flex: 1 }} />
+              <button
+                className="btn"
+                style={{ width: 70, margin: 0, background: ng.has(dateStr) ? 'var(--accent)' : '#fff', color: ng.has(dateStr) ? '#fff' : 'var(--ink)', border: '1.5px solid var(--ink)' }}
+                onClick={() => toggleDay(dateStr)}
+              >
+                {ng.has(dateStr) ? '✕' : '○'}
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="card">
+          <h2><span className="num">3</span>みんなの状況</h2>
+          {total === 0 ? (
+            <div className="empty-state">まだ誰も登録していません</div>
+          ) : (
+            <>
+              {candidateDates.map((date) => {
+                const count = ngCounts[date] || 0;
+                const widthPct = Math.min(100, Math.round((count / total) * 100));
+                return (
+                  <div className="summary-row" key={date}>
+                    <div className="date">{labelOf(date)}</div>
+                    <div className="bar-bg"><div className="bar" style={{ width: widthPct + '%' }} /></div>
+                    <div className="who">{count}/{total}</div>
+                  </div>
+                );
+              })}
+              <div className="empty-state" style={{ paddingTop: 10 }}>
+                登録メンバー：{total}人（{members.map((m) => m.name).join('、')}）
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="card">
+          <h2><span className="num">★</span>このページの共有リンク</h2>
+          <p style={{ fontSize: 12, color: 'var(--muted)', margin: '0 0 10px' }}>このリンクをLINEグループに貼ってください。</p>
+          <input type="text" readOnly value={shareUrl} style={{ fontSize: 11.5, color: 'var(--muted)' }} />
+          <button className="btn" onClick={copyLink}>リンクをコピー</button>
+        </div>
+
+        {toast ? <div className="toast show">{toast}</div> : null}
+      </div>
+    );
+  }
+
   return (
     <div className="wrap">
       <header>
@@ -188,18 +405,9 @@ export default function Home() {
       <div className="card">
         <h2><span className="num">1</span>名前を入力</h2>
         {name ? (
-          <div className="whoami">
-            名前：<b>{name}</b>
-            <button onClick={changeName}>変更</button>
-          </div>
+          <div className="whoami">名前：<b>{name}</b><button onClick={changeName}>変更</button></div>
         ) : null}
-        <input
-          type="text"
-          placeholder="例：あつまるん"
-          maxLength={12}
-          value={nameInput}
-          onChange={(e) => setNameInput(e.target.value)}
-        />
+        <input type="text" placeholder="例：たっしー" maxLength={12} value={nameInput} onChange={(e) => setNameInput(e.target.value)} />
         <button className="btn" onClick={handleSetName}>この名前で進める</button>
       </div>
 
@@ -252,9 +460,7 @@ export default function Home() {
             const ratio = total > 0 ? count / total : 0;
             const { bg, fg } = total > 0 ? colorForRatio(ratio) : { bg: '#fff', fg: 'var(--ink)' };
             return (
-              <div key={'b' + dateStr} className="day" style={{ background: bg, color: fg, borderColor: bg }}>
-                {d}
-              </div>
+              <div key={'b' + dateStr} className="day" style={{ background: bg, color: fg, borderColor: bg }}>{d}</div>
             );
           })}
         </div>
@@ -271,11 +477,9 @@ export default function Home() {
           <>
             {summaryEntries.map(([date, count]) => {
               const widthPct = Math.min(100, Math.round((count / total) * 100));
-              const d = new Date(date);
-              const label = `${d.getMonth() + 1}/${d.getDate()}(${DOW[d.getDay()]})`;
               return (
                 <div className="summary-row" key={date}>
-                  <div className="date">{label}</div>
+                  <div className="date">{labelOf(date)}</div>
                   <div className="bar-bg"><div className="bar" style={{ width: widthPct + '%' }} /></div>
                   <div className="who">{count}/{total}</div>
                 </div>
