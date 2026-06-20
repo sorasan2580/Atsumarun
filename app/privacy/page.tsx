@@ -65,7 +65,7 @@ export default function PrivacyPage() {
       <div className="card">
         <h2><span className="num">8</span>お問い合わせ</h2>
         <p>本サービスに関するお問い合わせは、以下までご連絡ください。</p>
-        <p>（連絡先メールアドレスをここに記載）</p>
+        <p>（atsumarun.support@gmail.com）</p>
       </div>
 
       <p className="empty-state">最終更新日：2026年6月20日</p>
