@@ -337,7 +337,7 @@ export default function Home() {
           {name ? (
             <div className="whoami">名前：<b>{name}</b><button onClick={changeName}>変更</button></div>
           ) : null}
-          <input type="text" placeholder="例：たっしー" maxLength={12} value={nameInput} onChange={(e) => setNameInput(e.target.value)} />
+          <input type="text" placeholder="例：あつまるん" maxLength={12} value={nameInput} onChange={(e) => setNameInput(e.target.value)} />
           <button className="btn" onClick={handleSetName}>この名前で進める</button>
         </div>
 
