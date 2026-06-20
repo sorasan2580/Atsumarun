@@ -389,6 +389,12 @@ export default function Home() {
           <button className="btn" onClick={copyLink}>リンクをコピー</button>
         </div>
 
+        <div className="empty-state">
+          <a href="/privacy" style={{ color: 'var(--muted)' }}>プライバシーポリシー</a>
+          {' '}・{' '}
+          <a href="/terms" style={{ color: 'var(--muted)' }}>利用規約</a>
+        </div>
+
         {toast ? <div className="toast show">{toast}</div> : null}
       </div>
     );
@@ -499,6 +505,12 @@ export default function Home() {
         </p>
         <input type="text" readOnly value={shareUrl} style={{ fontSize: 11.5, color: 'var(--muted)' }} />
         <button className="btn" onClick={copyLink}>リンクをコピー</button>
+      </div>
+
+      <div className="empty-state">
+        <a href="/privacy" style={{ color: 'var(--muted)' }}>プライバシーポリシー</a>
+        {' '}・{' '}
+        <a href="/terms" style={{ color: 'var(--muted)' }}>利用規約</a>
       </div>
 
       {toast ? <div className="toast show">{toast}</div> : null}
